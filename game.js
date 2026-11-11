@@ -9,6 +9,7 @@
   const btnToggleAI = document.getElementById('btnToggleAI');
   const btnWarp = document.getElementById('btnWarp');
   const btnSensors = document.getElementById('btnSensors');
+  const btnLearn = document.getElementById('btnLearn');
   const btnSaveBrain = document.getElementById('btnSaveBrain');
   const btnResetBrain = document.getElementById('btnResetBrain');
   const elEpisode = document.getElementById('rlEpisode');
@@ -21,10 +22,14 @@
   const elAction = document.getElementById('rlAction');
   const elStateDump = document.getElementById('stateVectorDump');
 
+  // Physics constants mirror river_raid_env.py so Python-trained weights see the same game.
   const W = canvas.width;
-  const H = canvas.height;
-  const PLAY_H = H;
+  const PLAY_H = canvas.height;
   const SLICE_H = 4;
+  const START_Y = PLAY_H - 72;
+  const STEER_STEP = 4.2;
+  const RAY_STEP = 10;
+  const RAY_MAX = 260;
 
   // Blue River & Green Land Color Scheme
   const COLORS = {
@@ -61,6 +66,7 @@
     warpIdx: 0,
     warpFactor: 1,
     showSensors: true,
+    learning: true,
     lastSensorRays: [],
     lastBestTargetX: W / 2,
     lastNearestJet: null,
@@ -96,6 +102,39 @@
     btnSensors.textContent = `Lidar Vectors: ${rlConfig.showSensors ? 'ON' : 'OFF'}`;
     btnSensors.classList.toggle('active', rlConfig.showSensors);
   });
+
+  function syncLearnUI() {
+    btnLearn.textContent = `Online Learning: ${rlConfig.learning ? 'ON' : 'OFF'}`;
+    btnLearn.classList.toggle('active', rlConfig.learning);
+  }
+
+  btnLearn.addEventListener('click', () => {
+    rlConfig.learning = !rlConfig.learning;
+    syncLearnUI();
+  });
+
+  // A Python-trained brain is already converged: watch it instead of fine-tuning with browser SGD.
+  agent.onPythonBrainLoaded = () => {
+    rlConfig.learning = false;
+    syncLearnUI();
+  };
+
+  // When served by river_raid.py, verify the browser physics still match the Python env.
+  fetch('/api/config')
+    .then((res) => (res.ok ? res.json() : null))
+    .then((cfg) => {
+      if (!cfg) return;
+      const local = {
+        W, PLAY_H, SLICE_H, playerY: START_Y, playerW: player.w, playerH: player.h,
+        minSpeed: player.minSpeed, maxSpeed: player.maxSpeed, cruiseSpeed: player.cruiseSpeed,
+        steerStep: STEER_STEP, rayStep: RAY_STEP, rayMax: RAY_MAX
+      };
+      const drift = Object.keys(local).filter((k) => cfg[k] !== undefined && cfg[k] !== local[k]);
+      if (drift.length) {
+        console.warn('Browser physics differ from Python env:', drift.map((k) => `${k}: js=${local[k]} py=${cfg[k]}`));
+      }
+    })
+    .catch(() => {});
 
   btnSaveBrain.addEventListener('click', () => {
     agent.saveToStorage();
@@ -151,9 +190,9 @@
 
   const player = {
     x: W / 2,
-    y: PLAY_H - 80,
-    w: 24,
-    h: 24,
+    y: START_Y,
+    w: 28,
+    h: 28,
     speed: 3.2,
     minSpeed: 1.8,
     maxSpeed: 5.8,
@@ -382,8 +421,8 @@
     return Math.min(x - leftBank, rightBank - x);
   }
 
-  function castSensorRay(angleRad, maxDist = 260) {
-    const step = 8;
+  function castSensorRay(angleRad, maxDist = RAY_MAX) {
+    const step = RAY_STEP;
     const dx = Math.sin(angleRad);
     const dy = -Math.cos(angleRad);
     for (let d = step; d <= maxDist; d += step) {
@@ -417,7 +456,7 @@
 
     for (let i = 0; i < anglesDeg.length; i++) {
       const rad = (anglesDeg[i] * Math.PI) / 180;
-      const r = castSensorRay(rad, 260);
+      const r = castSensorRay(rad);
       rays.push(r);
       obs[i] = r.dist;
     }
@@ -467,7 +506,7 @@
     state.distanceInSector = 0;
     state.paused = false;
     player.x = W / 2;
-    player.y = PLAY_H - 80;
+    player.y = START_Y;
     player.speed = player.cruiseSpeed;
     player.bank = 0;
     resetRiverGenerator();
@@ -481,14 +520,14 @@
     let action = 0;
 
     if (rlConfig.enabled) {
-      action = agent.act(prevState);
+      action = agent.act(prevState, rlConfig.learning);
 
       player.bank = 0;
       if (action === 1) {
-        player.x -= 4.2;
+        player.x -= STEER_STEP;
         player.bank = -1;
       } else if (action === 2) {
-        player.x += 4.2;
+        player.x += STEER_STEP;
         player.bank = 1;
       }
 
@@ -502,11 +541,11 @@
     } else {
       player.bank = 0;
       if (keys['ArrowLeft'] || keys['KeyA']) {
-        player.x -= 4.0;
+        player.x -= STEER_STEP;
         player.bank = -1;
       }
       if (keys['ArrowRight'] || keys['KeyD']) {
-        player.x += 4.0;
+        player.x += STEER_STEP;
         player.bank = 1;
       }
 
@@ -559,8 +598,10 @@
 
     if (rlConfig.enabled) {
       if (crashed) {
-        agent.remember(prevState, action, -12.0, prevState, true);
-        agent.replay();
+        if (rlConfig.learning) {
+          agent.remember(prevState, action, -12.0, prevState, true);
+          agent.replay();
+        }
         agent.onEpisodeEnd(state.score);
         startNewGame();
         return;
@@ -584,8 +625,12 @@
           }
         }
 
-        agent.remember(prevState, action, reward, nextState, false);
-        agent.replay();
+        if (rlConfig.learning) {
+          agent.remember(prevState, action, reward, nextState, false);
+          agent.replay();
+        } else {
+          agent.episodeReward += reward;
+        }
       }
     } else if (crashed) {
       startNewGame();
@@ -705,7 +750,7 @@
 
   function updateRLDashboard() {
     elEpisode.textContent = String(agent.episode);
-    elEpsilon.textContent = agent.epsilon.toFixed(3);
+    elEpsilon.textContent = rlConfig.learning ? agent.epsilon.toFixed(3) : '0 (greedy)';
     elReward.textContent = agent.episodeReward.toFixed(1);
     elSimScore.textContent = String(state.score);
     elBestScore.textContent = String(agent.bestScore);
@@ -761,6 +806,7 @@
   }
 
   syncModeUI();
+  syncLearnUI();
   resetRiverGenerator();
   updateRLDashboard();
   requestAnimationFrame(loop);

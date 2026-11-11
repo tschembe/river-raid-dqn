@@ -57,8 +57,13 @@ class RiverRaidEnv:
     HUD_H: int = 88
     PLAY_H: int = 632
     SLICE_H: int = 4
+    START_Y: float = PLAY_H - 72.0
+    STEER_STEP: float = 4.2
+    RAY_STEP: float = 10.0
+    RAY_MAX: float = 260.0
 
-    def __init__(self) -> None:
+    def __init__(self, seed: Optional[int] = None) -> None:
+        self.rng = random.Random(seed)
         self.score: int = 0
         self.high_score: int = 0
         self.sector: int = 1
@@ -69,7 +74,7 @@ class RiverRaidEnv:
 
         # Player state
         self.player_x: float = self.W / 2
-        self.player_y: float = self.PLAY_H - 72.0
+        self.player_y: float = self.START_Y
         self.player_w: float = 28.0
         self.player_h: float = 28.0
         self.min_speed: float = 1.8
@@ -101,7 +106,9 @@ class RiverRaidEnv:
 
         self.reset()
 
-    def reset(self) -> np.ndarray:
+    def reset(self, seed: Optional[int] = None) -> np.ndarray:
+        if seed is not None:
+            self.rng.seed(seed)
         self.score = 0
         self.sector = 1
         self.distance_in_sector = 0.0
@@ -109,7 +116,7 @@ class RiverRaidEnv:
         self.done = False
 
         self.player_x = self.W / 2
-        self.player_y = self.PLAY_H - 72.0
+        self.player_y = self.START_Y
         self.player_speed = self.cruise_speed
         self.player_bank = 0
 
@@ -143,6 +150,23 @@ class RiverRaidEnv:
 
         return self.get_observation()
 
+    def config(self) -> Dict[str, float]:
+        """Physics constants the browser visualizer needs to mirror this env exactly."""
+        return {
+            "W": self.W,
+            "PLAY_H": self.PLAY_H,
+            "SLICE_H": self.SLICE_H,
+            "playerY": self.START_Y,
+            "playerW": self.player_w,
+            "playerH": self.player_h,
+            "minSpeed": self.min_speed,
+            "maxSpeed": self.max_speed,
+            "cruiseSpeed": self.cruise_speed,
+            "steerStep": self.STEER_STEP,
+            "rayStep": self.RAY_STEP,
+            "rayMax": self.RAY_MAX,
+        }
+
     def _generate_top_slice(self) -> None:
         self.distance_in_sector += self.SLICE_H
 
@@ -159,27 +183,27 @@ class RiverRaidEnv:
             self.gen_width += (116.0 - self.gen_width) * 0.14
             self.gen_island_width = max(0.0, self.gen_island_width - 8.0)
         else:
-            if random.random() < 0.04:
+            if self.rng.random() < 0.04:
                 margin = 130.0
-                self.gen_target_center = margin + random.random() * (self.W - margin * 2.0)
+                self.gen_target_center = margin + self.rng.random() * (self.W - margin * 2.0)
 
-            if random.random() < 0.045:
+            if self.rng.random() < 0.045:
                 min_w = max(125.0, 210.0 - self.sector * 10.0)
                 max_w = 420.0
-                self.gen_target_width = min_w + random.random() * (max_w - min_w)
+                self.gen_target_width = min_w + self.rng.random() * (max_w - min_w)
 
             self.gen_island_timer -= 1
             if self.gen_island_timer <= 0:
                 if (
                     self.gen_target_island_width == 0.0
                     and self.gen_width > 300.0
-                    and random.random() < 0.45
+                    and self.rng.random() < 0.45
                 ):
-                    self.gen_target_island_width = 65.0 + random.random() * 65.0
-                    self.gen_island_timer = 90 + random.randint(0, 90)
+                    self.gen_target_island_width = 65.0 + self.rng.random() * 65.0
+                    self.gen_island_timer = 90 + self.rng.randint(0, 90)
                 else:
                     self.gen_target_island_width = 0.0
-                    self.gen_island_timer = 110 + random.randint(0, 120)
+                    self.gen_island_timer = 110 + self.rng.randint(0, 120)
 
             if self.gen_width < 270.0:
                 self.gen_target_island_width = 0.0
@@ -208,21 +232,21 @@ class RiverRaidEnv:
         )
         self.slices.append(new_slice)
 
-        if not is_road_band and random.random() < 0.14:
+        if not is_road_band and self.rng.random() < 0.14:
             left_edge = new_slice.center - new_slice.width / 2.0
             right_edge = new_slice.center + new_slice.width / 2.0
-            if random.random() < 0.5:
-                sx = max(14.0, left_edge - 22.0 - random.random() * max(10.0, left_edge - 36.0))
+            if self.rng.random() < 0.5:
+                sx = max(14.0, left_edge - 22.0 - self.rng.random() * max(10.0, left_edge - 36.0))
             else:
                 sx = min(
                     self.W - 24.0,
-                    right_edge + 16.0 + random.random() * max(10.0, self.W - right_edge - 40.0),
+                    right_edge + 16.0 + self.rng.random() * max(10.0, self.W - right_edge - 40.0),
                 )
             self.scenery.append(
                 SceneryItem(
                     x=sx,
                     y=top_y,
-                    kind="tree" if random.random() < 0.78 else "house",
+                    kind="tree" if self.rng.random() < 0.78 else "house",
                 )
             )
 
@@ -240,7 +264,7 @@ class RiverRaidEnv:
         if self.gen_spawn_cooldown > 0:
             return
 
-        from_left = random.random() < 0.5
+        from_left = self.rng.random() < 0.5
         direction = 1 if from_left else -1
         vx = direction * (3.2 + min(2.2, self.sector * 0.25))
         self.jets.append(
@@ -254,7 +278,7 @@ class RiverRaidEnv:
             )
         )
         base_gap = max(22.0, 48.0 - self.sector * 2.5)
-        self.gen_spawn_cooldown = int(base_gap + random.random() * 25.0)
+        self.gen_spawn_cooldown = int(base_gap + self.rng.random() * 25.0)
 
     def _add_score(self, pts: int) -> None:
         self.score += pts
@@ -264,15 +288,11 @@ class RiverRaidEnv:
     def get_slice_at_y(self, y: float) -> RiverSlice:
         if not self.slices:
             return RiverSlice(y, self.W / 2, 290.0, 0.0, False)
-        # Slices are ordered from bottom (highest y) to top (lowest y)
-        best = self.slices[0]
-        best_diff = abs(best.y - y)
-        for s in self.slices:
-            d = abs(s.y - y)
-            if d < best_diff:
-                best_diff = d
-                best = s
-        return best
+        # Slices are ordered from bottom (highest y) to top (lowest y) and are
+        # always exactly SLICE_H apart, so the nearest one can be indexed directly.
+        idx = int(math.floor((self.slices[0].y - y) / self.SLICE_H + 0.5))
+        idx = min(max(idx, 0), len(self.slices) - 1)
+        return self.slices[idx]
 
     def is_touching_land(self, x: float, y: float, half_w: float) -> bool:
         s = self.get_slice_at_y(y)
@@ -314,8 +334,8 @@ class RiverRaidEnv:
             return min(x - isl_right, right_bank - x)
         return min(x - left_bank, right_bank - x)
 
-    def _cast_ray(self, angle_rad: float, max_dist: float = 260.0) -> RayHit:
-        step = 10.0
+    def _cast_ray(self, angle_rad: float, max_dist: float = RAY_MAX) -> RayHit:
+        step = self.RAY_STEP
         dx = math.sin(angle_rad)
         dy = -math.cos(angle_rad)
         d = step
@@ -343,7 +363,7 @@ class RiverRaidEnv:
         rays: List[RayHit] = []
 
         for i, deg in enumerate(angles_deg):
-            r = self._cast_ray(math.radians(deg), 260.0)
+            r = self._cast_ray(math.radians(deg))
             rays.append(r)
             obs[i] = r.dist
         self.last_rays = rays
@@ -387,10 +407,10 @@ class RiverRaidEnv:
         """
         self.player_bank = 0
         if action == 1:
-            self.player_x -= 4.2
+            self.player_x -= self.STEER_STEP
             self.player_bank = -1
         elif action == 2:
-            self.player_x += 4.2
+            self.player_x += self.STEER_STEP
             self.player_bank = 1
 
         if action == 3:

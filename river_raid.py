@@ -6,16 +6,19 @@ Includes:
 2. Deep Q-Network (DQN) Reinforcement Learning Agent (`rl_agent.py`)
 3. Interactive Terminal Curses Arcade UI (`--terminal`)
 4. Headless Fast RL Training CLI (`--train <episodes>`)
-5. Interactive Pygame / Browser Visualizer Server (default)
+5. Greedy policy benchmark (`--eval <episodes>`)
+6. Browser Visualizer Server (`--serve`)
 """
 
 from __future__ import annotations
 
 import argparse
 import curses
+import functools
 import json
 import os
 import sys
+import random
 import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict
@@ -23,19 +26,29 @@ from typing import Any, Dict
 import numpy as np
 
 from river_raid_env import RiverRaidEnv
-from rl_agent import ACTION_NAMES, RiverRaidDQNAgent
+from rl_agent import ACTION_NAMES, DEFAULT_MODEL_PATH, RiverRaidDQNAgent
+
+ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 # ---------------------------------------------------------------------------
 # Mode 1: Fast Headless CLI Training in Python
 # ---------------------------------------------------------------------------
-def train_headless(episodes: int = 100, max_steps: int = 4000) -> RiverRaidDQNAgent:
-    env = RiverRaidEnv()
-    agent = RiverRaidDQNAgent()
+def train_headless(
+    episodes: int = 100,
+    max_steps: int = 4000,
+    model_path: str = DEFAULT_MODEL_PATH,
+    fresh: bool = False,
+    seed: int | None = None,
+) -> RiverRaidDQNAgent:
+    if fresh and os.path.exists(model_path):
+        os.remove(model_path)
+    env = RiverRaidEnv(seed=seed)
+    agent = RiverRaidDQNAgent(model_path=model_path)
 
     print("=" * 68)
     print(f"🚀 RIVER RAID - PYTHON DQN REINFORCEMENT LEARNING TRAINER")
-    print(f"Architecture : MLP (13 -> 64 -> 64 -> 5) | Replay Buffer: 20,000")
+    print(f"Architecture : Double DQN, MLP (13 -> 64 -> 64 -> 5) | Adam | Replay Buffer: {agent.memory.capacity:,}")
     print(f"Starting Ep  : {agent.episode} | Epsilon: {agent.epsilon:.3f} | Best Score: {agent.best_score}")
     print("=" * 68)
 
@@ -52,8 +65,7 @@ def train_headless(episodes: int = 100, max_steps: int = 4000) -> RiverRaidDQNAg
             next_state, reward, done, info = env.step(action)
             agent.remember(state, action, reward, next_state, done)
 
-            if steps % 2 == 0:
-                agent.replay()
+            agent.replay()
 
             state = next_state
             total_reward += reward
@@ -80,9 +92,50 @@ def train_headless(episodes: int = 100, max_steps: int = 4000) -> RiverRaidDQNAg
 
     agent.save()
     print("=" * 68)
+    print(f"Throughput   : {agent.total_steps / (time.time() - start_time):,.0f} steps/s")
     print(f"✅ Training complete! Saved trained model to '{agent.model_path}' (Best Score: {agent.best_score})")
     print("=" * 68)
     return agent
+
+
+# ---------------------------------------------------------------------------
+# Mode 1b: Greedy (no exploration) benchmark of a saved policy
+# ---------------------------------------------------------------------------
+def evaluate(
+    episodes: int = 20,
+    max_steps: int = 4000,
+    model_path: str = DEFAULT_MODEL_PATH,
+    seed: int = 0,
+) -> Dict[str, float]:
+    env = RiverRaidEnv()
+    agent = RiverRaidDQNAgent(model_path=model_path)
+    scores, sectors, crashes = [], [], 0
+    for ep in range(episodes):
+        # Episode i always sees the same river layout, so checkpoints are comparable
+        state = env.reset(seed=seed + ep)
+        for _ in range(max_steps):
+            state, _, done, _ = env.step(agent.act(state, explore=False))
+            if done:
+                crashes += 1
+                break
+        scores.append(env.score)
+        sectors.append(env.sector)
+
+    result = {
+        "mean": float(np.mean(scores)),
+        "median": float(np.median(scores)),
+        "min": float(np.min(scores)),
+        "max": float(np.max(scores)),
+        "mean_sector": float(np.mean(sectors)),
+        "crash_rate": crashes / episodes,
+    }
+    print(f"Greedy eval of '{model_path}' over {episodes} seeded episodes (cap {max_steps} steps):")
+    print(
+        f"  score mean {result['mean']:.0f} | median {result['median']:.0f} | "
+        f"min {result['min']:.0f} | max {result['max']:.0f}"
+    )
+    print(f"  mean sector reached {result['mean_sector']:.2f} | crash rate {result['crash_rate']:.0%}")
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -198,11 +251,23 @@ def run_curses_game(stdscr: Any) -> None:
 # ---------------------------------------------------------------------------
 class PythonRLRequestHandler(SimpleHTTPRequestHandler):
     agent: RiverRaidDQNAgent = None  # type: ignore
+    env_config: Dict[str, float] = {}
 
     def log_message(self, format: str, *args: Any) -> None:
         pass  # Keep terminal output clean
 
+    def _send_json(self, payload: Dict[str, Any]) -> None:
+        data = json.dumps(payload).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
     def do_GET(self) -> None:
+        if self.path == "/api/config":
+            self._send_json(self.env_config)
+            return
         if self.path == "/api/brain":
             payload = {
                 "episode": self.agent.episode,
@@ -217,12 +282,7 @@ class PythonRLRequestHandler(SimpleHTTPRequestHandler):
                     "l3b": self.agent.policy_net.b3.flatten().tolist(),
                 },
             }
-            data = json.dumps(payload).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
+            self._send_json(payload)
             return
         super().do_GET()
 
@@ -246,10 +306,31 @@ def main() -> None:
         action="store_true",
         help="Start local HTTP server on port 8000 with Python-trained weights",
     )
+    parser.add_argument(
+        "--eval",
+        type=int,
+        default=0,
+        metavar="EPISODES",
+        help="Benchmark the saved policy greedily over N seeded episodes",
+    )
+    parser.add_argument("--model", default=DEFAULT_MODEL_PATH, help="Checkpoint path (.npz)")
+    parser.add_argument("--fresh", action="store_true", help="Discard the checkpoint and train from scratch")
+    parser.add_argument("--seed", type=int, default=None, help="Seed Python/NumPy RNGs for reproducible runs")
+    parser.add_argument("--port", type=int, default=8000, help="Port for --serve")
     args = parser.parse_args()
 
+    if args.seed is not None:
+        random.seed(args.seed)
+        np.random.seed(args.seed)
+
     if args.train > 0:
-        train_headless(args.train)
+        train_headless(args.train, model_path=args.model, fresh=args.fresh, seed=args.seed)
+        if args.eval > 0:
+            evaluate(args.eval, model_path=args.model)
+        return
+
+    if args.eval > 0:
+        evaluate(args.eval, model_path=args.model)
         return
 
     if args.terminal:
@@ -257,17 +338,19 @@ def main() -> None:
         return
 
     # Default: run a quick pre-training warmup if no checkpoint exists, then serve or summarize
-    if not os.path.exists("river_raid_dqn.npz"):
+    if not os.path.exists(args.model):
         print("No saved Python model found — pre-training DQN agent for 60 episodes in Python...")
-        agent = train_headless(60)
+        agent = train_headless(60, model_path=args.model)
     else:
-        agent = RiverRaidDQNAgent()
+        agent = RiverRaidDQNAgent(model_path=args.model)
         print(f"Loaded trained Python DQN model '{agent.model_path}' (Episode {agent.episode}, Best Score: {agent.best_score})")
 
     if args.serve:
         PythonRLRequestHandler.agent = agent
-        port = 8000
-        server = ThreadingHTTPServer(("127.0.0.1", port), PythonRLRequestHandler)
+        PythonRLRequestHandler.env_config = RiverRaidEnv().config()
+        port = args.port
+        handler = functools.partial(PythonRLRequestHandler, directory=ROOT_DIR)
+        server = ThreadingHTTPServer(("127.0.0.1", port), handler)
         print(f"🌐 Serving River Raid at http://127.0.0.1:{port} (Press Ctrl+C to stop)")
         try:
             server.serve_forever()

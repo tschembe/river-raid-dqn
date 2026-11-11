@@ -128,7 +128,7 @@ class RiverRaidDQNAgent {
     this.targetNet.copyFrom(this.policyNet);
 
     // Hyperparameters
-    this.gamma = 0.96;
+    this.gamma = 0.97;
     this.lr = 0.0025;
     this.epsilon = 0.35; // Start with reasonable exploration so users see learning quickly
     this.epsilonMin = 0.02;
@@ -151,11 +151,11 @@ class RiverRaidDQNAgent {
     this.loadFromStorage();
   }
 
-  act(state) {
+  act(state, explore = true) {
     const qValues = this.policyNet.predict(state);
     this.lastQValues = qValues;
 
-    if (Math.random() < this.epsilon) {
+    if (explore && Math.random() < this.epsilon) {
       this.lastAction = Math.floor(Math.random() * this.actionDim);
       return this.lastAction;
     }
@@ -195,12 +195,13 @@ class RiverRaidDQNAgent {
       if (done) {
         currentQ[action] = reward;
       } else {
-        const nextQ = this.targetNet.predict(nextState);
-        let maxNextQ = nextQ[0];
+        // Double DQN: online net picks the next action, target net scores it
+        const onlineNext = this.policyNet.predict(nextState);
+        let nextAct = 0;
         for (let a = 1; a < this.actionDim; a++) {
-          if (nextQ[a] > maxNextQ) maxNextQ = nextQ[a];
+          if (onlineNext[a] > onlineNext[nextAct]) nextAct = a;
         }
-        currentQ[action] = reward + this.gamma * maxNextQ;
+        currentQ[action] = reward + this.gamma * this.targetNet.predict(nextState)[nextAct];
       }
 
       this.policyNet.trainStep(state, currentQ, this.lr);
@@ -222,7 +223,6 @@ class RiverRaidDQNAgent {
     }
     this.episode++;
     this.episodeReward = 0;
-    this.targetNet.copyFrom(this.policyNet);
     if (this.episode % 5 === 0) {
       this.saveToStorage();
     }
@@ -270,6 +270,7 @@ class RiverRaidDQNAgent {
           this.epsilon = pyBrain.epsilon ?? 0.02;
           this.bestScore = pyBrain.bestScore || this.bestScore;
           this.saveToStorage();
+          if (this.onPythonBrainLoaded) this.onPythonBrainLoaded();
         }
       })
       .catch(() => {});

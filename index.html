@@ -11,10 +11,10 @@
     <!-- Left: Simulation Viewport -->
     <div class="viewport-panel">
       <div class="panel-header">
-        <span>SIMULATION VIEWPORT [600x720]</span>
+        <span>SIMULATION VIEWPORT [600x632]</span>
         <span class="status-tag" id="rlModeBadge">MANUAL_CTRL</span>
       </div>
-      <canvas id="gameCanvas" width="600" height="720"></canvas>
+      <canvas id="gameCanvas" width="600" height="632"></canvas>
     </div>
 
     <!-- Right: Engineering & RL Telemetry Sidebar -->
@@ -25,13 +25,14 @@
           <button id="btnToggleAI" class="eng-btn primary">Enable RL Agent [T]</button>
           <button id="btnWarp" class="eng-btn">Sim Speed: 1x</button>
           <button id="btnSensors" class="eng-btn active">Lidar Vectors: ON</button>
+          <button id="btnLearn" class="eng-btn active">Online Learning: ON</button>
           <button id="btnSaveBrain" class="eng-btn">Save Weights</button>
           <button id="btnResetBrain" class="eng-btn danger">Reset Network</button>
         </div>
       </div>
 
       <div class="panel-section">
-        <div class="panel-header">DQN TELEMETRY (MLP 13→64→64→5)</div>
+        <div class="panel-header">DOUBLE DQN TELEMETRY (MLP 13→64→64→5)</div>
         <table class="data-table">
           <tbody>
             <tr>
