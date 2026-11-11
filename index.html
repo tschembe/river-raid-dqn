@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>River Raid // RL Simulation Environment</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="workspace">
+    <!-- Left: Simulation Viewport -->
+    <div class="viewport-panel">
+      <div class="panel-header">
+        <span>SIMULATION VIEWPORT [600x720]</span>
+        <span class="status-tag" id="rlModeBadge">MANUAL_CTRL</span>
+      </div>
+      <canvas id="gameCanvas" width="600" height="720"></canvas>
+    </div>
+
+    <!-- Right: Engineering & RL Telemetry Sidebar -->
+    <div class="telemetry-panel">
+      <div class="panel-section">
+        <div class="panel-header">CONTROL &amp; TRAINING</div>
+        <div class="btn-grid">
+          <button id="btnToggleAI" class="eng-btn primary">Enable RL Agent [T]</button>
+          <button id="btnWarp" class="eng-btn">Sim Speed: 1x</button>
+          <button id="btnSensors" class="eng-btn active">Lidar Vectors: ON</button>
+          <button id="btnSaveBrain" class="eng-btn">Save Weights</button>
+          <button id="btnResetBrain" class="eng-btn danger">Reset Network</button>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div class="panel-header">DQN TELEMETRY (MLP 13→64→64→5)</div>
+        <table class="data-table">
+          <tbody>
+            <tr>
+              <td>Episode</td>
+              <td id="rlEpisode">1</td>
+            </tr>
+            <tr>
+              <td>Epsilon (Exploration)</td>
+              <td id="rlEpsilon">0.35</td>
+            </tr>
+            <tr>
+              <td>Episode Return</td>
+              <td id="rlReward">0.0</td>
+            </tr>
+            <tr>
+              <td>Current Score</td>
+              <td id="simScore">0</td>
+            </tr>
+            <tr>
+              <td>Best AI Score</td>
+              <td id="rlBestScore">0</td>
+            </tr>
+            <tr>
+              <td>Sector</td>
+              <td id="simSector">1</td>
+            </tr>
+            <tr>
+              <td>Replay Buffer Size</td>
+              <td id="rlMemory">0</td>
+            </tr>
+            <tr>
+              <td>Selected Action</td>
+              <td id="rlAction">COAST</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="panel-section">
+        <div class="panel-header">ACTION Q-VALUES</div>
+        <div class="q-bars" id="qBarsContainer">
+          <div class="q-row"><span class="q-label">0: COAST</span><div class="q-track"><div class="q-fill" id="qBar0"></div></div><span class="q-num" id="qVal0">0.00</span></div>
+          <div class="q-row"><span class="q-label">1: LEFT</span><div class="q-track"><div class="q-fill" id="qBar1"></div></div><span class="q-num" id="qVal1">0.00</span></div>
+          <div class="q-row"><span class="q-label">2: RIGHT</span><div class="q-track"><div class="q-fill" id="qBar2"></div></div><span class="q-num" id="qVal2">0.00</span></div>
+          <div class="q-row"><span class="q-label">3: FAST</span><div class="q-track"><div class="q-fill" id="qBar3"></div></div><span class="q-num" id="qVal3">0.00</span></div>
+          <div class="q-row"><span class="q-label">4: SLOW</span><div class="q-track"><div class="q-fill" id="qBar4"></div></div><span class="q-num" id="qVal4">0.00</span></div>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div class="panel-header">STATE VECTOR (13D INPUT)</div>
+        <pre id="stateVectorDump" class="state-dump">Waiting for step...</pre>
+      </div>
+
+      <div class="panel-section">
+        <div class="panel-header">KEYBINDS</div>
+        <div class="keybinds-list">
+          <div><code>T</code> Toggle RL / Manual</div>
+          <div><code>← / →</code> Steer Left / Right</div>
+          <div><code>↑ / ↓</code> Throttle / Brake</div>
+          <div><code>SPACE</code> Start / Reset</div>
+          <div><code>P</code> Pause Sim</div>
+          <div><code>M</code> Audio: <span id="muteStatus">OFF</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="rl_agent.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>
